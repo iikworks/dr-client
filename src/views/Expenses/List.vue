@@ -1,0 +1,573 @@
+<template>
+  <v-container>
+    <div v-if="$store.getters.getUserEmployee == 999">
+      <v-btn depressed block color="green accent-4" :to="{ name: 'ExpensesCreate' }">
+        <v-icon left dark>
+          mdi-database-plus
+        </v-icon>
+        <b>Создать</b>
+      </v-btn>
+    </div>
+    <v-row>
+      <v-col
+        cols="12"
+        md="4"
+        class="pt-2 pb-0"
+      >
+        <v-autocomplete
+          :disabled="loading"
+          v-model="liquid_id"
+          :items="liquids"
+          required
+          label="Фильтр по топливу"
+          hide-details="auto"
+          outlined
+          dense
+          :append-icon="'mdi-reload'"
+          @click:append="loadLiquids()"
+        ></v-autocomplete>
+      </v-col>
+      <v-col
+        cols="12"
+        md="4"
+        class="pt-2 pb-0"
+      >
+        <v-autocomplete
+          :disabled="loading"
+          v-model="worker_id"
+          :items="workers"
+          required
+          label="Фильтр по работникам"
+          hide-details="auto"
+          dense
+          outlined
+          :append-icon="'mdi-reload'"
+          @click:append="loadWorkers"
+        ></v-autocomplete>
+      </v-col>
+      <v-col
+        cols="12"
+        md="4"
+        class="pt-2 pb-2"
+      >
+        <v-autocomplete
+          :disabled="loading"
+          v-model="vehicle_id"
+          :items="vehicles"
+          label="Фильтр по технике"
+          hide-details="auto"
+          dense
+          outlined
+          :append-icon="'mdi-reload'"
+          @click:append="updateVehicles"
+        ></v-autocomplete>
+      </v-col>
+    </v-row>
+    <v-btn
+      class="mb-1"
+      block
+      :disabled="loading"
+      depressed
+      @click="showDateFilter = !showDateFilter"
+    >
+      <v-icon left dark>
+        mdi-calendar
+      </v-icon>
+      <b>Фильтр по дате</b>
+    </v-btn>
+    <transition name="slide-fade">
+      <div v-if="showDateFilter">
+        <v-date-picker
+          v-model="filterDateRange"
+          full-width
+          range
+          :disabled="loading"
+          class="mt-3 mb-3"
+        ></v-date-picker>
+      </div>
+    </transition>
+    <transition name="slide-fade">
+      <v-btn
+        v-if="filterDateRange[0] && filterDateRange[1]"
+        color="grey darken-1"
+        block
+        dark
+        @click="resetDateRangeFilter"
+        depressed
+      >
+        <v-icon left dark>
+          mdi-close
+        </v-icon>
+        <b>Сбросить дату {{ filterDateRange[0] }} - {{ filterDateRange[1] }}</b>
+      </v-btn>
+    </transition>
+    <transition name="slide-fade">
+      <v-btn
+        v-if="liquid_id || worker_id || vehicle_id || filterDateRange[0] && filterDateRange[1]"
+        class="mt-1"
+        block
+        small
+        @click="resetAllFilters"
+        depressed
+      >
+        <v-icon left dark>
+          mdi-close
+        </v-icon>
+        <b>Сбросить все фильтры</b>
+      </v-btn>
+    </transition>
+    <v-row>
+      <v-col
+        cols="12"
+        md="4"
+        class="pt-2 pb-0"
+      >
+        <v-checkbox
+          v-model="unverified"
+          :disabled="loading"
+          style="margin-bottom:-15px;margin-top:-8px;"
+          label="Показать неотмеченные"
+        ></v-checkbox>
+      </v-col>
+      <v-col
+        cols="12"
+        md="4"
+        class="pt-2 pb-0"
+      >
+        <v-checkbox
+          v-model="archive"
+          :disabled="loading"
+          style="margin-bottom:-15px;margin-top:-8px;"
+          label="Архив"
+        ></v-checkbox>
+      </v-col>
+    </v-row>
+    <transition name="slide-fade">
+      <v-simple-table v-if="!loading && expenses_list.length > 0" style="white-space: nowrap;">
+        <template v-slot:default>
+          <thead>
+            <tr>
+              <th class="text-left">
+                Дата
+              </th>
+              <th></th>
+              <th class="text-left">
+                Кол-во
+              </th>
+              <th class="text-left">
+                Кому
+              </th>
+              <th class="text-left">
+                Назначение
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <ExpenseTableRow
+              v-for="expense in expenses_list"
+              :key="expense.id"
+              :expense="expense"
+              :loadingVerified="loadingVerified"
+              @setLoadingVerified="loadingVerified = $event"
+              :loadExpenses="loadExpenses"
+            />
+          </tbody>
+        </template>
+      </v-simple-table>
+    </transition>
+    <transition name="slide-fade">
+      <div v-if="!loading && expenses_list.length < 1">
+        <v-alert
+          class="mt-3"
+          type="error"
+          style="border-radius:20px;"
+        >
+          <b>Нет данных.</b>
+        </v-alert>
+      </div>
+    </transition>
+    <transition name="slide-fade">
+      <div v-if="paginateButtons.length > 0 && !loading">
+        <div class="pl-4 pt-2 pb-2">
+          Показано: <b>{{ currentButton.startExpense }}-{{ currentButton.finishExpense }}</b> из <b>{{ expensesCount }}</b>
+          <span v-if="amountLiquid"><br>Общий расход: <b>{{ amount | formatNumber }}</b> <span class="grey--text">{{ amountLiquid.unit }}.</span></span>
+        </div>
+        <v-divider></v-divider>
+        <div class="pt-2 text-center" v-if="!loading">
+          <span
+              v-for="button in paginateButtons"
+              :key="button.pageNumber"
+          >
+            <v-btn
+                small
+                v-if="button.pageNumber === pagesCount && currentPage !== pagesCount && currentPage !== pagesCount - 1 && currentPage !== pagesCount - 2"
+                depressed
+                class="ml-1"
+                active-class="no-active"
+                disabled
+            >
+              <b>...</b>
+            </v-btn>
+            <v-btn
+                small
+                v-if="isShowButton(button)"
+                @click="switchPage(button.pageNumber)"
+                depressed
+                :disabled="currentPage === button.pageNumber"
+                class="ml-1"
+                active-class="no-active"
+            >
+              <b>{{ button.startExpense }}-{{ button.finishExpense }}</b>
+            </v-btn>
+            <v-btn
+                small
+                v-if="button.pageNumber === 1 && currentPage !== 1 && currentPage !== 2 && currentPage !== 3"
+                depressed
+                class="ml-1"
+                active-class="no-active"
+                disabled
+            >
+              <b>...</b>
+            </v-btn>
+          </span>
+        </div>
+      </div>
+    </transition>
+  </v-container>
+</template>
+
+<script>
+import axios from 'axios'
+import {eventBus} from '@/main'
+import ExpenseTableRow from '@/components/Expenses/TableRow'
+
+export default {
+  name: 'ExpensesList',
+  components: {
+    ExpenseTableRow,
+  },
+  computed: {
+    workers: function() {
+      return this.workersToList(this.$store.getters.getWorkers, true)
+    },
+    liquids: function() {
+      return this.liquidsToList(this.$store.getters.getLiquids, true)
+    }
+  },
+  data() {
+    return {
+      expenses_list: [],
+      expensesCount: 0,
+      perPage: 50,
+      currentPage: this.$route.query.page || 1,
+      pagesCount: 1,
+      unverified: false,
+      archive: false,
+      vehicles: this.vehiclesToList(this.$store.getters.getVehicles, true),
+      liquid_id: this.$route.query.liquid_id,
+      vehicle_id: this.$route.query.vehicle_id,
+      worker_id: this.$route.query.worker_id,
+      amount: 0,
+      amountLiquid: null,
+      showDateFilter: false,
+      loading: false,
+      loadingVerified: 0,
+      filterDateRange: [
+        this.$route.query.s_date,
+        this.$route.query.e_date,
+      ],
+      paginateButtons: [],
+      currentButton: {},
+    }
+  },
+  mounted() {
+    eventBus.$emit('setTitle', 'Расходы')
+    this.loadExpenses()
+    if(this.$route.query.page) this.currentPage = parseInt(this.$route.query.page)
+  },
+  methods: {
+    loadExpenses() {
+      this.loading = true
+      this.expenses_list = []
+
+      let url = `${process.env.VUE_APP_API_URL}expenses/?order_column=date&order_type=desc`
+
+      let offset = this.perPage * this.currentPage - this.perPage
+      if (!offset) offset = 0
+      url = url + `&offset=${offset}&limit=${this.perPage}`
+      if (this.$route.query.liquid_id && this.$route.query.liquid_id != 0) {
+        url = url + `&liquid_id=${parseInt(this.$route.query.liquid_id)}`
+        this.liquid_id = parseInt(this.$route.query.liquid_id)
+      }
+      if (this.$route.query.worker_id && this.$route.query.worker_id != 0) {
+        url = url + `&worker_id=${parseInt(this.$route.query.worker_id)}`
+        this.worker_id = parseInt(this.$route.query.worker_id)
+      }
+      if (this.$route.query.vehicle_id && this.$route.query.vehicle_id != 0) {
+        url = url + `&vehicle_id=${parseInt(this.$route.query.vehicle_id)}`
+        this.vehicle_id = parseInt(this.$route.query.vehicle_id)
+      }
+      if (
+        this.$route.query.s_date && this.$route.query.s_date != ''
+        && this.$route.query.e_date && this.$route.query.e_date != ''
+      ) {
+        url = url + `&s_date=${this.$route.query.s_date}`
+        url = url + `&e_date=${this.$route.query.e_date}`
+        this.filterDateRange = [
+          this.$route.query.s_date,
+          this.$route.query.e_date
+        ]
+      }
+      if (this.$route.query.unverified && this.$route.query.unverified != false) {
+        url = url + `&unverified=true`
+        this.unverified = this.$route.query.unverified
+      }
+      if (this.$route.query.archive && this.$route.query.archive != false) {
+        url = url + `&archive=true`
+        this.archive = this.$route.query.archive
+      }
+
+      axios.get(url, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }).then(response => {
+        this.expenses_list = response.data.expenses
+        this.expensesCount = response.data.count
+        if(response.data.amount) this.amount = response.data.amount
+        else this.amount = 0
+        if(response.data.liquid) this.amountLiquid = response.data.liquid
+        else this.amountLiquid = null
+
+        if(this.$route.query.page) this.currentPage = parseInt(this.$route.query.page)
+
+        this.countPages()
+
+        this.loading = false
+      })
+    },
+    countPages() {
+      let pages = Math.ceil(this.expensesCount / this.perPage)
+      let buttons = []
+      for(var i = 0; i < pages; i++) {
+        let finishExpense = this.perPage * i + this.perPage
+        if (finishExpense > this.expensesCount) finishExpense = this.expensesCount
+        let button = {
+          'pageNumber': i + 1,
+          'startExpense': this.perPage * i + 1,
+          'finishExpense': finishExpense
+        }
+        buttons.push(button)
+        if (this.currentPage === i + 1) this.currentButton = button
+      }
+      this.paginateButtons = buttons
+      this.pagesCount = pages
+    },
+    resetDateRangeFilter() {
+      let query = Object.assign({}, this.$route.query)
+      if (query.s_date) delete query.s_date
+      if (query.e_date) delete query.e_date
+      this.filterDateRange = [
+        undefined,
+        undefined
+      ]
+      this.$router.replace({ query })
+
+      this.showDateFilter = false
+    },
+    resetAllFilters() {
+      let query = Object.assign({}, this.$route.query)
+      if (query.liquid_id) delete query.liquid_id
+      this.liquid_id = undefined
+      if (query.worker_id) delete query.worker_id
+      this.worker_id = undefined
+      if (query.vehicle_id) delete query.vehicle_id
+      this.vehicle_id = undefined
+      if (query.s_date) delete query.s_date
+      if (query.e_date) delete query.e_date
+      this.filterDateRange = [
+        undefined,
+        undefined
+      ]
+      this.$router.replace({ query })
+
+      this.showDateFilter = false
+
+      this.currentPage = 1
+    },
+    isShowButton(button) {
+      if (button.pageNumber + 1 == this.currentPage || button.pageNumber == this.currentPage || button.pageNumber - 1 == this.currentPage) return true
+      if (button.pageNumber == this.pagesCount) return true
+      if (button.pageNumber == 1 && this.currentPage != 1 && this.currentPage != 2) return true
+      return false
+    },
+    switchPage(page) {
+      this.$router.push({ query: { ...this.$route.query, page: page } })
+    },
+    reloadUsing() {
+      let usingData = this.$store.getters.getUsing
+      let vehiclesData = this.$store.getters.getVehicles
+      let vehicles = []
+      let willBeIgnored = []
+      let selectedVehicle = 0
+
+      vehicles.push({
+        value: 0,
+        text: '—',
+        unit: ''
+      })
+
+      for (const using of usingData) {
+        if (using.worker_id == this.worker_id) {
+          for (const vehicle of vehiclesData) {
+            if (using.vehicle_id == vehicle.id) {
+              let text = ``
+              if (vehicle.brand) text += `${vehicle.brand} `
+              text += `${vehicle.model}`
+              if (vehicle.government_number) text += ` ${this.$options.filters.displayGonvNumber(vehicle.government_number)}`
+
+              vehicles.push({
+                value: vehicle.id,
+                text: `${text}, использований: ${using.used}`,
+              })
+
+              willBeIgnored.push(vehicle)
+
+              if(selectedVehicle == 0) selectedVehicle = vehicle.id
+            }
+          }
+        }
+      }
+
+      for (const vehicle of vehiclesData) {
+        let ifIgnored = false
+        for (const ignored of willBeIgnored) {
+          if(ignored == vehicle) ifIgnored = true
+        }
+
+        if(!ifIgnored) {
+          let text = ``
+          if (vehicle.brand) text += `${vehicle.brand} `
+          text += `${vehicle.model}`
+          if (vehicle.government_number) text += ` ${this.$options.filters.displayGonvNumber(vehicle.government_number)}`
+
+          vehicles.push({
+            value: vehicle.id,
+            text: text
+          })
+        }
+      }
+
+      this.vehicles = vehicles
+      this.vehicle_id = selectedVehicle
+    },
+    updateVehicles() {
+      this.loadVehicles()
+      if(this.worker_id != 0){
+        this.loadUsing()
+        this.reloadUsing()
+      }
+    }
+  },
+  watch: {
+    loading(val) {
+      eventBus.$emit('setLoading', val)
+    },
+    $route() {
+      if (this.$route.query.page) this.currentPage = parseInt(this.$route.query.page)
+
+      if(this.$route.query.s_date) {
+        if(this.$route.query.e_date){
+          this.loadExpenses()
+          window.scroll({
+            top: 0,
+            left: 0,
+            behavior: 'smooth'
+          })
+        }
+      }
+      else {
+        this.loadExpenses()
+        window.scroll({
+          top: 0,
+          left: 0,
+          behavior: 'smooth'
+        })
+      }
+    },
+    liquid_id(val) {
+      if(val == 0) {
+        let query = Object.assign({}, this.$route.query)
+        if (query.liquid_id) delete query.liquid_id
+        this.liquid_id = undefined
+        return this.$router.replace({ query })
+      }
+      if(this.$route.query.liquid_id != val) this.$router.push({ query: { ...this.$route.query, liquid_id: val } })
+      this.currentPage = 1
+    },
+    vehicle_id(val) {
+      if(val == 0) {
+        let query = Object.assign({}, this.$route.query)
+        if (query.vehicle_id) delete query.vehicle_id
+        this.vehicle_id = undefined
+        return this.$router.replace({ query })
+      }
+      if(this.$route.query.vehicle_id != val) this.$router.push({ query: { ...this.$route.query, vehicle_id: val } })
+      this.currentPage = 1
+    },
+    worker_id(val) {
+      this.vehicles = this.vehiclesToList(this.$store.getters.getVehicles)
+
+      if(val == 0) {
+        let query = Object.assign({}, this.$route.query)
+        if (query.worker_id) delete query.worker_id
+        this.worker_id = undefined
+        return this.$router.replace({ query })
+      }
+      if(this.$route.query.worker_id != val){
+        this.$router.push({ query: { ...this.$route.query, worker_id: val } })
+        if (this.worker_id != undefined) this.reloadUsing()
+      }
+      this.currentPage = 1
+    },
+    filterDateRange(val) {
+      if(this.$route.query.s_date != val[0] || this.$route.query.e_date != val[1]){
+        let query = Object.assign({}, this.$route.query)
+        if (query.date) delete query.date
+        this.filterDate = undefined
+        query.s_date = val[0]
+        query.e_date = val[1]
+        this.$router.push({ query })
+      }
+
+      if (val.length >= 2) {
+        this.showDateFilter = false
+        this.currentPage = 1
+      }
+    },
+    currentPage(val) {
+      if(this.$route.query.page != val) this.$router.push({ query: { ...this.$route.query, page: val } })
+    },
+    unverified(val) {
+      if(val == false) {
+        let query = Object.assign({}, this.$route.query)
+        if (query.unverified) delete query.unverified
+        this.unverified = undefined
+        return this.$router.replace({ query })
+      }
+      if(this.$route.query.unverified != val) this.$router.push({ query: { ...this.$route.query, unverified: true } })
+      this.currentPage = 1
+    },
+    archive(val) {
+      if(val == false) {
+        let query = Object.assign({}, this.$route.query)
+        if (query.archive) delete query.archive
+        this.archive = undefined
+        return this.$router.replace({ query })
+      }
+      if(this.$route.query.archive != val) this.$router.push({ query: { ...this.$route.query, archive: true } })
+      this.currentPage = 1
+    }
+  },
+}
+</script>
